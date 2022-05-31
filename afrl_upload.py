@@ -1,29 +1,32 @@
 from getpass import getpass
 import math
+import concurrent.futures
 
 import pandas as pd
 import cript
 
 
-def get_citation(row, citations):
+def get_citation(index, row):
+    reference_title = row["reference"]
+
     # Check if citation was already created
     if row["reference"] in citations.keys():
-        print(f"Found existing reference: {reference.title}")
+        print(f"ROW {index + 2} -- Found existing reference: {reference_title}")
         return citations[row["reference"]]
 
     # Create reference
-    reference = cript.Reference(group=group, title=row["reference"], public = True)
-    if "doi.org" in row["reference"]:
-        reference.doi = row["reference"].replace("doi.org", "").strip("/")
+    reference = cript.Reference(group=group, title=reference_title, doi="", public=True)
+    if "doi.org" in reference_title:
+        reference.doi = reference_title.replace("doi.org", "").strip("/")
 
     # Save reference
     try:
-        api.save(reference)
-        print(f"Created reference: {reference.title}")
+        api.save(reference, max_level=0)
+        print(f"ROW {index + 2} -- Created reference: {reference.title}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch reference from the DB if it already exists
         reference = api.get(cript.Reference, {"title": reference.title, "created_by": api.user.uid})
-        print(f"Found existing reference: {reference.title}")
+        print(f"ROW {index + 2} -- Found existing reference: {reference.title}")
 
     # Create citation
     citation = cript.Citation(reference=reference)
@@ -32,8 +35,22 @@ def get_citation(row, citations):
     return citation
 
 
+def get_inventory(inventory_name):
+    inventory = cript.Inventory(group=group, collection=collection, name=inventory_name, materials=[], public=True)
 
-def get_polymer(row, polymers, citation):
+    # Save inventory
+    try:
+        api.save(inventory)
+        print(f"Created Inventory: {inventory.name}")
+    except cript.exceptions.DuplicateNodeError:
+        # Fetch inventory from the DB if it already exists
+        inventory = api.get(cript.Inventory, {"name": inventory.name, "group": group.uid})
+        print(f"Found existing inventory: {inventory.name}")
+
+    return inventory
+
+
+def get_polymer(index, row, citation):
     name = row["polymer"]
     cas = row["polymer_CAS"]
     bigsmiles = _convert_to_bigsmiles(row["polymer_SMILES"])
@@ -74,36 +91,39 @@ def get_polymer(row, polymers, citation):
     # Save material
     try:
         api.save(polymer)
-        print(f"Created polymer: {polymer.name}")
+        print(f"ROW {index + 2} -- Created polymer: {polymer.name}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch and update existing material
         polymer = api.get(cript.Material, {"name": polymer.name, "created_by": api.user.uid})
         _setattrs(polymer, **polymer_dict)
         api.save(polymer)
-        print(f"Updated existing polymer: {polymer.name}")
+        print(f"ROW {index + 2} -- Updated existing polymer: {polymer.name}")
 
     polymers[unique_set] = polymer
     return polymer
 
 
-def get_solvent(row):
-    solvent = api.get(
-        cript.Material, 
-        {
-            "identifiers": [
-                {
-                    "key": "cas", 
-                    "value": row["solvent_CAS"]
-                }
-            ], 
-            "group": cript_group.uid
-        }
-    )
-    print(f"Found existing solvent: {solvent.name}")
-    return solvent
+def get_solvent(index, row):
+    try:
+        solvent = api.get(
+            cript.Material, 
+            {
+                "identifiers": [
+                    {
+                        "key": "cas", 
+                        "value": row["solvent_CAS"]
+                    }
+                ], 
+                "group": cript_group.uid
+            }
+        )
+        print(f"ROW {index + 2} -- Found existing solvent: {solvent.name}")
+        return solvent
+    except cript.exceptions.APIGetError:
+        return None
 
 
-def get_mixture(row, polymer, solvent, citation):
+def get_mixture(index, row, polymer, solvent, citation):
     name = f"{polymer.name} + {solvent.name} mixture"
     conc_vol_fraction = row["polymer_vol_frac"]
     conc_mass_fraction = row["polymer_wt_frac"]
@@ -158,30 +178,15 @@ def get_mixture(row, polymer, solvent, citation):
     # Save material
     try:
         api.save(mixture)
-        print(f"Created mixture: {mixture.name}")
+        print(f"ROW {index + 2} -- Created mixture: {mixture.name}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch and update existing material
         mixture = api.get(cript.Material, {"name": mixture.name, "created_by": api.user.uid})
         _setattrs(mixture, **mixture_dict)
         api.save(mixture)
-        print(f"Updated existing mixture: {mixture.name}")
+        print(f"ROW {index + 2} -- Updated existing mixture: {mixture.name}")
 
     return mixture
-
-
-def get_inventory():
-    inventory = cript.Inventory(group=group, collection=collection, name="linear_polymer_3pdb", materials=[])
-
-    # Save inventory
-    try:
-        api.save(inventory)
-        print(f"Created Inventory: {inventory.name}")
-    except cript.exceptions.DuplicateNodeError:
-        # Fetch inventory from the DB if it already exists
-        inventory = api.get(cript.Inventory, {"name": inventory.name, "group": group.uid})
-        print(f"Found existing inventory: {inventory.name}")
-
-    return inventory
 
 
 def _convert_to_bigsmiles(old_smiles):
@@ -197,42 +202,73 @@ def _setattrs(obj, **kwargs):
         setattr(obj, key, value)
 
 
+def record_error(message):
+    error_file = open("./errors.txt", "a")
+    error_file.write(message + "\n\n")
+    error_file.close()
+    print(message)
+
+
+def upload(data):
+    index, row = data[0], data[1]
+
+    citation = get_citation(index, row)  # Reuse for each object in row
+
+    solvent = get_solvent(index, row)
+    if not solvent:
+        # Record error and skip row if solvent is not found
+        solvent_name = row["solvent"]
+        solvent_cas = row["solvent_CAS"]
+        record_error(f"ROW {index + 2} -- Solvent not found: {solvent_name} ({solvent_cas})")
+        return
+
+    # Update solvent inventory
+    inventory_solvents.materials.append(solvent)
+    api.save(inventory_solvents)
+    print(f"ROW {index + 2} -- Updated solvent inventory.")
+
+    polymer = get_polymer(index, row, citation)
+
+    # Update polymer inventory
+    polymer = get_polymer(index, row, citation)
+    inventory_polymers.materials.append(polymer)
+    api.save(inventory_polymers)
+    print(f"ROW {index + 2} -- Updated polymer inventory.")
+
+    mixture = get_mixture(index, row, polymer, solvent, citation)
+
+    # Update mixture inventory
+    inventory_mixtures.materials.append(mixture)
+    api.save(inventory_mixtures)
+    print(f"ROW {index + 2} -- Updated mixture inventory.")
+
+
+
+
 if __name__ == "__main__":
     host = input("Host (e.g., criptapp.org): ")
     token = getpass("API Token: ")
     group_name = input("Group name: ")
     collection_name = input("Collection name: ")
-    path = input("Path to CSV file: ")
+    inventory_name = input("Inventory name: ")
+    path = input("Path to CSV file: ").strip('"')
     citations = {}
     polymers = {}
-    inventory_list = []
 
     # Establish connection with the API
-    api = cript.API(host, token, tls=False)
+    api = cript.API(host, token)
 
-    # Fetch Group objects
+    # Fetch objects
     group = api.get(cript.Group, {"name": group_name})
     cript_group = api.get(cript.Group, {"name": "CRIPT"})
-
-    # Fetch Collection object
     collection = api.get(cript.Collection, {"name": collection_name, "group": group.uid})
+    inventory_solvents = get_inventory(f"{inventory_name} (solvents)")
+    inventory_polymers = get_inventory("linear_polymer_3pdb (polymers)")
+    inventory_mixtures = get_inventory("linear_polymer_3pdb (mixtures)")
 
     # Upload data
-    df = pd.read_csv(path)
-    for index, row in df.iterrows():
-        print(f"\nRow {index}")
-        print("*************************")
-
-        citation = get_citation(row, citations)  # Reuse for each object in row
-        polymer = get_polymer(row, polymers, citation)
-        solvent = get_solvent(row)
-        mixture = get_mixture(row, polymer, solvent, citation)
-        inventory_list += [polymer, solvent, mixture]
-
-        print("*************************\n")
-
-    # Add materials to inventory
-    inventory = get_inventory()
-    inventory.materials += inventory_list
-    api.save(inventory)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        df = pd.read_csv(path)
+        for index, row in df.iterrows():
+            executor.submit(upload, (index, row))
 
