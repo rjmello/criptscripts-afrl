@@ -1,4 +1,5 @@
 from getpass import getpass
+import yaml
 import math
 import concurrent.futures
 
@@ -111,7 +112,7 @@ def get_solvent(index, row):
                 "identifiers": [
                     {
                         "key": "cas", 
-                        "value": row["solvent_CAS"]
+                        "value": row["solvent_CAS"].strip()
                     }
                 ], 
                 "group": cript_group.uid
@@ -124,7 +125,7 @@ def get_solvent(index, row):
 
 
 def get_mixture(index, row, polymer, solvent, citation):
-    name = f"{polymer.name} + {solvent.name} mixture"
+    name = f"{polymer.name} + {solvent.name} mixture ({index})"
     conc_vol_fraction = row["polymer_vol_frac"]
     conc_mass_fraction = row["polymer_wt_frac"]
     temp_cloud = row["cloud_point_temp"]
@@ -215,7 +216,7 @@ def upload(data):
     citation = get_citation(index, row)  # Reuse for each object in row
 
     solvent = get_solvent(index, row)
-    if not solvent:
+    if solvent is None:
         # Record error and skip row if solvent is not found
         solvent_name = row["solvent"]
         solvent_cas = row["solvent_CAS"]
@@ -243,32 +244,46 @@ def upload(data):
     print(f"ROW {index + 2} -- Updated mixture inventory.")
 
 
+def load_config():
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        config = {}
 
+    if config.get("host") is None:
+        config["host"] = input("Host (e.g., criptapp.org): ")
+    if config.get("token") is None:
+        config["token"] = getpass("API Token: ")
+    if config.get("group") is None:
+        config["group"] = input("Group name: ")
+    if config.get("collection") is None:
+        config["collection"] = input("Collection name: ")
+    if config.get("inventory") is None:
+        config["inventory"] = input("Inventory name: ")
+    if config.get("path") is None:
+        config["path"] = input("Path to CSV file: ").strip('"')
+
+    return config
+    
 
 if __name__ == "__main__":
-    host = input("Host (e.g., criptapp.org): ")
-    token = getpass("API Token: ")
-    group_name = input("Group name: ")
-    collection_name = input("Collection name: ")
-    inventory_name = input("Inventory name: ")
-    path = input("Path to CSV file: ").strip('"')
+    config = load_config()
     citations = {}
     polymers = {}
 
     # Establish connection with the API
-    api = cript.API(host, token)
+    api = cript.API(config["host"], config["token"], tls=False)
 
     # Fetch objects
-    group = api.get(cript.Group, {"name": group_name})
+    group = api.get(cript.Group, {"name": config["group"]})
     cript_group = api.get(cript.Group, {"name": "CRIPT"})
-    collection = api.get(cript.Collection, {"name": collection_name, "group": group.uid})
-    inventory_solvents = get_inventory(f"{inventory_name} (solvents)")
-    inventory_polymers = get_inventory("linear_polymer_3pdb (polymers)")
-    inventory_mixtures = get_inventory("linear_polymer_3pdb (mixtures)")
+    collection = api.get(cript.Collection, {"name": config["collection"], "group": group.uid})
+    inventory_solvents = get_inventory(config["inventory"] + " (solvents)")
+    inventory_polymers = get_inventory(config["inventory"] + " (polymers)")
+    inventory_mixtures = get_inventory(config["inventory"] + " (mixtures)")
 
     # Upload data
+    df = pd.read_csv(config["path"])
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        df = pd.read_csv(path)
-        for index, row in df.iterrows():
-            executor.submit(upload, (index, row))
-
+        futures = list(executor.map(upload, df.iterrows()))
