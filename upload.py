@@ -52,7 +52,7 @@ def get_inventory(inventory_name):
 
 
 def get_polymer(index, row, citation):
-    name = row["polymer"]
+    name = row["polymer"] + f" ({index})"
     cas = row["polymer_CAS"]
     bigsmiles = _convert_to_bigsmiles(row["polymer_SMILES"])
     mw_w = row["polymer_Mw"]
