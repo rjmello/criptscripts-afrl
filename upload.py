@@ -129,6 +129,7 @@ def get_mixture(index, row, polymer, solvent, citation):
     conc_vol_fraction = row["polymer_vol_frac"]
     conc_mass_fraction = row["polymer_wt_frac"]
     temp_cloud = row["cloud_point_temp"]
+    one_phase_direction = row["one_phase_direction"]
     pressure = row["pressure_MPa"]
 
     # Create identifiers
@@ -164,6 +165,8 @@ def get_mixture(index, row, polymer, solvent, citation):
         )
         if pressure:
             properties[-1].conditions.append(cript.Condition(key="pressure", value=pressure, unit="MPa"))
+        if one_phase_direction:
+            properties[-1].conditions.append(cript.Condition(key="+one_phase_direction", value=one_phase_direction))
 
     # Create new material object
     mixture_dict = {
