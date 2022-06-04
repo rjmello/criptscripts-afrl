@@ -25,7 +25,7 @@ def get_citation(index, row):
         print(f"ROW {index + 2} -- Created reference: {reference.title}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch reference from the DB if it already exists
-        reference = api.get(cript.Reference, {"title": reference.title, "created_by": api.user.uid})
+        reference = api.get(cript.Reference, {"title": reference.title, "created_by": api.user.uid}, max_level=0)
         print(f"ROW {index + 2} -- Found existing reference: {reference.title}")
 
     # Create citation
@@ -40,11 +40,11 @@ def get_inventory(inventory_name):
 
     # Save inventory
     try:
-        api.save(inventory)
+        api.save(inventory, max_level=0)
         print(f"Created Inventory: {inventory.name}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch inventory from the DB if it already exists
-        inventory = api.get(cript.Inventory, {"name": inventory.name, "group": group.uid})
+        inventory = api.get(cript.Inventory, {"name": inventory.name, "group": group.uid}, max_level=0)
         print(f"Found existing inventory: {inventory.name}")
 
     return inventory
@@ -70,7 +70,8 @@ def get_solvent(index, row):
                     }
                 ], 
                 "group": cript_group.uid
-            }
+            },
+            max_level=0
         )
         print(f"ROW {index + 2} -- Found existing solvent: {solvent.name}")
         solvents[cas] = solvent
@@ -122,13 +123,13 @@ def get_polymer(index, row, citation):
 
     # Save material
     try:
-        api.save(polymer)
+        api.save(polymer, max_level=0)
         print(f"ROW {index + 2} -- Created polymer: {polymer.name}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch and update existing material
-        polymer = api.get(cript.Material, {"name": polymer.name, "created_by": api.user.uid})
+        polymer = api.get(cript.Material, {"name": polymer.name, "created_by": api.user.uid}, max_level=0)
         _setattrs(polymer, **polymer_dict)
-        api.save(polymer)
+        api.save(polymer, max_level=0)
         print(f"ROW {index + 2} -- Updated existing polymer: {polymer.name}")
 
     polymers[unique_set] = polymer
@@ -192,34 +193,15 @@ def get_mixture(index, row, polymer, solvent, citation):
     }
     mixture = cript.Material(**mixture_dict)
 
-    # Handle repeats
-    if mixture.name in mixtures.keys():
-        existing_mixture = mixtures[mixture.name]
-        # Add additional properties, if defined
-        new_properties = []
-        for property in mixture.properties:
-            match = False
-            for existing_property in existing_mixture.properties:
-                if (
-                    existing_property.key == property.key
-                    and existing_property.value == property.value
-                    and existing_property.unit == property.unit
-                ):
-                    match = True
-                    break
-            if match == False:
-                new_properties.append(property)
-        mixture_dict["properties"] = existing_mixture.properties + new_properties
-
     # Save material
     try:
-        api.save(mixture)
+        api.save(mixture, max_level=0)
         print(f"ROW {index + 2} -- Created mixture: {mixture.name}")
     except cript.exceptions.DuplicateNodeError:
         # Fetch and update existing material
-        mixture = api.get(cript.Material, {"name": mixture.name, "created_by": api.user.uid})
+        mixture = api.get(cript.Material, {"name": mixture.name, "created_by": api.user.uid}, max_level=0)
         _setattrs(mixture, **mixture_dict)
-        api.save(mixture)
+        api.save(mixture, max_level=0)
         print(f"ROW {index + 2} -- Updated existing mixture: {mixture.name}")
 
     mixtures[mixture.name] = mixture
@@ -246,9 +228,7 @@ def record_error(message):
     print(message)
 
 
-def upload(data):
-    index, row = data[0], data[1]
-
+def upload(index, row):
     citation = get_citation(index, row)  # Reuse for each object in row
 
     solvent = get_solvent(index, row)
@@ -261,21 +241,21 @@ def upload(data):
 
     # Update solvent inventory
     inventory_solvents.materials.append(solvent)
-    api.save(inventory_solvents)
+    api.save(inventory_solvents, max_level=0)
     print(f"ROW {index + 2} -- Updated solvent inventory.")
 
     polymer = get_polymer(index, row, citation)
 
     # Update polymer inventory
     inventory_polymers.materials.append(polymer)
-    api.save(inventory_polymers)
+    api.save(inventory_polymers, max_level=0)
     print(f"ROW {index + 2} -- Updated polymer inventory.")
 
     mixture = get_mixture(index, row, polymer, solvent, citation)
 
     # Update mixture inventory
     inventory_mixtures.materials.append(mixture)
-    api.save(inventory_mixtures)
+    api.save(inventory_mixtures, max_level=0)
     print(f"ROW {index + 2} -- Updated mixture inventory.")
 
 
@@ -310,12 +290,12 @@ if __name__ == "__main__":
     mixtures = {}
 
     # Establish connection with the API
-    api = cript.API(config["host"], config["token"], tls=False)
+    api = cript.API(config["host"], config["token"])
 
     # Fetch objects
-    group = api.get(cript.Group, {"name": config["group"]})
-    cript_group = api.get(cript.Group, {"name": "CRIPT"})
-    collection = api.get(cript.Collection, {"name": config["collection"], "group": group.uid})
+    group = api.get(cript.Group, {"name": config["group"]}, max_level=0)
+    cript_group = api.get(cript.Group, {"name": "CRIPT"}, max_level=0)
+    collection = api.get(cript.Collection, {"name": config["collection"], "group": group.uid}, max_level=0)
     inventory_solvents = get_inventory(config["inventory"] + " (solvents)")
     inventory_polymers = get_inventory(config["inventory"] + " (polymers)")
     inventory_mixtures = get_inventory(config["inventory"] + " (mixtures)")
@@ -323,4 +303,6 @@ if __name__ == "__main__":
     # Upload data
     df = pd.read_csv(config["path"])
     for index, row in df.iterrows():
-        upload((index, row))
+        if index + 2 < 2090:
+            continue
+        upload(index, row)
