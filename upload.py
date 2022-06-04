@@ -303,6 +303,4 @@ if __name__ == "__main__":
     # Upload data
     df = pd.read_csv(config["path"])
     for index, row in df.iterrows():
-        if index + 2 < 2090:
-            continue
         upload(index, row)
