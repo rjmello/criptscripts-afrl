@@ -1,7 +1,6 @@
 from getpass import getpass
 import yaml
 import math
-import concurrent.futures
 
 import pandas as pd
 import cript
@@ -51,16 +50,48 @@ def get_inventory(inventory_name):
     return inventory
 
 
+def get_solvent(index, row):
+    cas = row["solvent_CAS"].strip()
+
+    # Skip repeats
+    if cas in solvents.keys():
+        solvent = solvents[cas]
+        print(f"ROW {index + 2} -- Found existing solvent: {solvent.name}")
+        return solvent
+
+    try:
+        solvent = api.get(
+            cript.Material, 
+            {
+                "identifiers": [
+                    {
+                        "key": "cas", 
+                        "value": cas
+                    }
+                ], 
+                "group": cript_group.uid
+            }
+        )
+        print(f"ROW {index + 2} -- Found existing solvent: {solvent.name}")
+        solvents[cas] = solvent
+        return solvent
+    except cript.exceptions.APIGetError:
+        return None
+
+
 def get_polymer(index, row, citation):
-    name = row["polymer"] + f" ({index})"
+    polymer_id = row["polymer_id"]
+    name = row["polymer"]
+    unique_name = name + f"_{polymer_id}"
     cas = row["polymer_CAS"]
     bigsmiles = _convert_to_bigsmiles(row["polymer_SMILES"])
     mw_w = row["polymer_Mw"]
     mw_d = row["polymer_PDI"]
 
     # Return repeats
-    unique_set = (mw_w, mw_d, citation)
+    unique_set = (mw_w, mw_d, citation.reference.title)
     if unique_set in polymers.keys():
+        print(f"ROW {index + 2} -- Found existing polymer: " + polymers[unique_set].name)
         return polymers[unique_set]
 
     # Create identifiers
@@ -82,7 +113,7 @@ def get_polymer(index, row, citation):
     # Create new material object
     polymer_dict = {
         "group": group,
-        "name": name,
+        "name": unique_name,
         "identifiers": identifiers,
         "properties": properties,
         "public": True
@@ -104,28 +135,10 @@ def get_polymer(index, row, citation):
     return polymer
 
 
-def get_solvent(index, row):
-    try:
-        solvent = api.get(
-            cript.Material, 
-            {
-                "identifiers": [
-                    {
-                        "key": "cas", 
-                        "value": row["solvent_CAS"].strip()
-                    }
-                ], 
-                "group": cript_group.uid
-            }
-        )
-        print(f"ROW {index + 2} -- Found existing solvent: {solvent.name}")
-        return solvent
-    except cript.exceptions.APIGetError:
-        return None
-
-
 def get_mixture(index, row, polymer, solvent, citation):
-    name = f"{polymer.name} + {solvent.name} mixture ({index})"
+    mixture_id = row["mixture_id"]
+    name = f"{polymer.name} + {solvent.name} mixture"
+    unique_name = name + f" ({mixture_id})"
     conc_vol_fraction = row["polymer_vol_frac"]
     conc_mass_fraction = row["polymer_wt_frac"]
     temp_cloud = row["cloud_point_temp"]
@@ -171,13 +184,32 @@ def get_mixture(index, row, polymer, solvent, citation):
     # Create new material object
     mixture_dict = {
         "group": group,
-        "name": name,
+        "name": unique_name,
         "identifiers": identifiers,
         "components": components,
         "properties": properties,
         "public": True
     }
     mixture = cript.Material(**mixture_dict)
+
+    # Handle repeats
+    if mixture.name in mixtures.keys():
+        existing_mixture = mixtures[mixture.name]
+        # Add additional properties, if defined
+        new_properties = []
+        for property in mixture.properties:
+            match = False
+            for existing_property in existing_mixture.properties:
+                if (
+                    existing_property.key == property.key
+                    and existing_property.value == property.value
+                    and existing_property.unit == property.unit
+                ):
+                    match = True
+                    break
+            if match == False:
+                new_properties.append(property)
+        mixture_dict["properties"] = existing_mixture.properties + new_properties
 
     # Save material
     try:
@@ -190,6 +222,7 @@ def get_mixture(index, row, polymer, solvent, citation):
         api.save(mixture)
         print(f"ROW {index + 2} -- Updated existing mixture: {mixture.name}")
 
+    mixtures[mixture.name] = mixture
     return mixture
 
 
@@ -234,7 +267,6 @@ def upload(data):
     polymer = get_polymer(index, row, citation)
 
     # Update polymer inventory
-    polymer = get_polymer(index, row, citation)
     inventory_polymers.materials.append(polymer)
     api.save(inventory_polymers)
     print(f"ROW {index + 2} -- Updated polymer inventory.")
@@ -273,7 +305,9 @@ def load_config():
 if __name__ == "__main__":
     config = load_config()
     citations = {}
+    solvents = {}
     polymers = {}
+    mixtures = {}
 
     # Establish connection with the API
     api = cript.API(config["host"], config["token"], tls=False)
@@ -288,5 +322,5 @@ if __name__ == "__main__":
 
     # Upload data
     df = pd.read_csv(config["path"])
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = list(executor.map(upload, df.iterrows()))
+    for index, row in df.iterrows():
+        upload((index, row))
