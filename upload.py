@@ -1,6 +1,7 @@
 from getpass import getpass
 import yaml
 import math
+import sys
 
 import pandas as pd
 import cript
@@ -228,6 +229,22 @@ def record_error(message):
     print(message)
 
 
+def update_inventories():
+    print("Updating Inventory nodes.")
+
+    # Update solvent inventory
+    api.save(inventory_solvents, max_level=0)
+    print(f"Updated solvent inventory.")
+
+    # Update polymer inventory
+    api.save(inventory_polymers, max_level=0)
+    print(f"Updated polymer inventory.")
+
+    # Update mixture inventory
+    api.save(inventory_mixtures, max_level=0)
+    print(f"Updated mixture inventory.")
+
+
 def upload(index, row):
     citation = get_citation(index, row)  # Reuse for each object in row
 
@@ -238,25 +255,13 @@ def upload(index, row):
         solvent_cas = row["solvent_CAS"]
         record_error(f"ROW {index + 2} -- Solvent not found: {solvent_name} ({solvent_cas})")
         return
-
-    # Update solvent inventory
     inventory_solvents.materials.append(solvent)
-    api.save(inventory_solvents, max_level=0)
-    print(f"ROW {index + 2} -- Updated solvent inventory.")
 
     polymer = get_polymer(index, row, citation)
-
-    # Update polymer inventory
     inventory_polymers.materials.append(polymer)
-    api.save(inventory_polymers, max_level=0)
-    print(f"ROW {index + 2} -- Updated polymer inventory.")
 
     mixture = get_mixture(index, row, polymer, solvent, citation)
-
-    # Update mixture inventory
     inventory_mixtures.materials.append(mixture)
-    api.save(inventory_mixtures, max_level=0)
-    print(f"ROW {index + 2} -- Updated mixture inventory.")
 
 
 def load_config():
@@ -303,4 +308,9 @@ if __name__ == "__main__":
     # Upload data
     df = pd.read_csv(config["path"])
     for index, row in df.iterrows():
-        upload(index, row)
+        try:
+            upload(index, row)
+        except KeyboardInterrupt:
+            update_inventories()
+            sys.exit(1)
+    update_inventories()
