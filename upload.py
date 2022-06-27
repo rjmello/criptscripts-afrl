@@ -154,8 +154,8 @@ def get_mixture(index, row, polymer, solvent, citation):
 
     # Create components
     components = [
-        cript.Component(component_uid=1, component=polymer),
-        cript.Component(component_uid=2, component=solvent)
+        cript.Component(component_id=1, material=polymer),
+        cript.Component(component_id=2, material=solvent)
     ]
 
     # Create properties
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     mixtures = {}
 
     # Establish connection with the API
-    api = cript.API(config["host"], config["token"])
+    api = cript.API(config["host"], config["token"], tls=False)
 
     # Fetch objects
     group = api.get(cript.Group, {"name": config["group"]}, max_level=0)
