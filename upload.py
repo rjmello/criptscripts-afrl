@@ -16,7 +16,7 @@ def get_citation(index, row):
         return citations[row["reference"]]
 
     # Create reference
-    reference = cript.Reference(group=group, title=reference_title, doi="", public=True)
+    reference = cript.Reference(group=group, title=reference_title, public=True)
     if "doi.org" in reference_title:
         reference.doi = reference_title.replace("doi.org", "").strip("/")
 
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     mixtures = {}
 
     # Establish connection with the API
-    api = cript.API(config["host"], config["token"], tls=False)
+    api = cript.API(config["host"], config["token"])
 
     # Fetch objects
     group = api.get(cript.Group, {"name": config["group"]}, max_level=0)
